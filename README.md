@@ -1,7 +1,9 @@
-# codeximg
+# chatgpt-desktop-image-mcp
 
 Give any agent **ChatGPT's image generator** as an MCP tool, by driving the
 already-signed-in Codex desktop app over the Chrome DevTools Protocol.
+
+The MCP server itself registers under the shorter name `codeximg`.
 
 - **No API key.**
 - **No Codex quota.** The app has a `Chat` / `Work` mode switch. `Work` runs the

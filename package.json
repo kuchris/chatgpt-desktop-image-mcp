@@ -2,6 +2,7 @@
   "name": "codeximg",
   "version": "0.2.0",
   "private": true,
+  "license": "MIT",
   "description": "ChatGPT image generation as an MCP tool, via the Codex desktop app over CDP — no API key, no Codex quota.",
   "type": "module",
   "bin": {
