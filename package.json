@@ -15,6 +15,7 @@
     "focus": "node generate.mjs --focus",
     "mcp": "node mcp-server.mjs",
     "smoke": "node smoke-test.mjs",
+    "smoke:glama": "node smoke-test.mjs --glama",
     "launch": "powershell -File launch-app.ps1"
   },
   "engines": {

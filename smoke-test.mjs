@@ -1,15 +1,17 @@
 // Speaks MCP to mcp-server.mjs over stdio and prints what comes back.
 //
-//   node smoke-test.mjs              # handshake + tools/list + image_status
-//   node smoke-test.mjs --generate   # ...and one real image generation
+//   node smoke-test.mjs            # handshake + tools/list + image_status
+//   node smoke-test.mjs --glama    # only the introspection a registry indexer runs
+//   node smoke-test.mjs --generate # ...also one real image generation
 //
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-const serverPath = fileURLToPath(new URL('./mcp-server.mjs', import.meta.url));
+const GLAMA = process.argv.includes('--glama');
 const GENERATE = process.argv.includes('--generate');
 
+const serverPath = fileURLToPath(new URL('./mcp-server.mjs', import.meta.url));
 const child = spawn(process.execPath, [serverPath], { stdio: ['pipe', 'pipe', 'inherit'] });
 
 const pending = new Map();
@@ -45,6 +47,7 @@ const rpc = (method, params) =>
     });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
   });
+
 const notify = (method, params) =>
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
 
@@ -54,7 +57,7 @@ const fail = (m) => {
   process.exit(1);
 };
 
-// 1. handshake
+// ---------------------------------------------------------------- handshake
 const init = await rpc('initialize', {
   protocolVersion: '2025-06-18',
   capabilities: {},
@@ -64,36 +67,55 @@ if (init.error) fail(JSON.stringify(init.error));
 console.log('initialize ok:', JSON.stringify(init.result));
 notify('notifications/initialized');
 
-// 2. tools/list
-const list = await rpc('tools/list');
-if (list.error) fail(JSON.stringify(list.error));
-console.log('tools:', list.result.tools.map((t) => t.name).join(', '));
-for (const t of list.result.tools) {
-  if (!t.description || !t.inputSchema) fail(`tool ${t.name} is missing description/schema`);
-}
-
-// 3. image_status (read-only)
-const status = await rpc('tools/call', { name: 'image_status', arguments: {} });
-console.log('\nimage_status ->');
-console.log(status.result.content[0].text);
-
-// 4. optional real generation
-if (GENERATE) {
-  console.log('\ngenerate_image (this takes 15-60s) ->');
-  const t0 = Date.now();
-  const gen = await rpc('tools/call', {
-    name: 'generate_image',
-    arguments: { prompt: 'a single black triangle centered on a plain white background', filename: 'mcp-smoke' },
-  });
-  if (gen.error) fail(JSON.stringify(gen.error));
-  if (gen.result.isError) fail('tool reported an error: ' + gen.result.content[0].text);
-  for (const block of gen.result.content) {
-    console.log('  block:', block.type === 'image' ? `image (${block.mimeType}, ${block.data.length} base64 chars)` : block.text);
+if (GLAMA) {
+  // The exact sequence Glama's registry pipeline runs against a sandboxed build,
+  // before it will make the listing discoverable.
+  console.log('\nintrospection (what a registry indexer sends) ->');
+  const seq = [
+    ['tools/list', 'tools'],
+    ['resources/list', 'resources'],
+    ['prompts/list', 'prompts'],
+  ];
+  for (const [method, key] of seq) {
+    const res = await rpc(method, {});
+    if (res.error) fail(`${method} -> ${JSON.stringify(res.error)}`);
+    const items = res.result?.[key] ?? [];
+    console.log(`  ${method.padEnd(16)} ok  (${items.length} ${key})`);
   }
-  console.log(`  elapsed: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  console.log('\nGLAMA INTROSPECTION PASSED');
+} else {
+  // tools/list
+  const list = await rpc('tools/list');
+  if (list.error) fail(JSON.stringify(list.error));
+  console.log('tools:', list.result.tools.map((t) => t.name).join(', '));
+  for (const t of list.result.tools) {
+    if (!t.description || !t.inputSchema) fail(`tool ${t.name} is missing description/schema`);
+  }
+
+  // image_status (read-only)
+  const status = await rpc('tools/call', { name: 'image_status', arguments: {} });
+  console.log('\nimage_status ->');
+  console.log(status.result.content[0].text);
+
+  // optional real generation
+  if (GENERATE) {
+    console.log('\ngenerate_image (this takes 15-60s) ->');
+    const t0 = Date.now();
+    const gen = await rpc('tools/call', {
+      name: 'generate_image',
+      arguments: { prompt: 'a single black triangle centered on a plain white background', filename: 'mcp-smoke' },
+    });
+    if (gen.error) fail(JSON.stringify(gen.error));
+    if (gen.result.isError) fail('tool reported an error: ' + gen.result.content[0].text);
+    for (const block of gen.result.content) {
+      console.log('  block:', block.type === 'image' ? `image (${block.mimeType}, ${block.data.length} base64 chars)` : block.text);
+    }
+    console.log(`  elapsed: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+  }
+
+  console.log('\nSMOKE TEST PASSED');
 }
 
-console.log('\nSMOKE TEST PASSED');
 child.stdin.end();
 await new Promise((r) => child.on('exit', r));
 console.log('server exited cleanly');

@@ -132,6 +132,19 @@ async function handle(msg) {
       case 'tools/list':
         return reply(id, { tools: TOOLS });
 
+      // This server exposes no resources or prompts, but registry indexers
+      // introspect all three list methods regardless of what was declared, and
+      // Glama's sandbox pipeline is one of them. An empty list is friendlier
+      // there than -32601.
+      case 'resources/list':
+        return reply(id, { resources: [] });
+
+      case 'resources/templates/list':
+        return reply(id, { resourceTemplates: [] });
+
+      case 'prompts/list':
+        return reply(id, { prompts: [] });
+
       case 'tools/call': {
         const name = params?.name;
         try {
