@@ -35,26 +35,40 @@ node generate.mjs "a single solid red circle on a plain white background" -o ./o
 
 ### Register the MCP server
 
-Claude Code:
+**Claude Code.** The `claude` CLI is often not on `PATH` — when Claude Code ships
+inside the Claude desktop app it lives under a versioned path that changes on update:
 
-```bash
-claude mcp add -s user codeximg -- node C:/Users/you/Desktop/git/codeximg/mcp-server.mjs
+```powershell
+& "$env:APPDATA\Claude\claude-code\<version>\claude.exe" mcp add -s user codeximg -- node C:/path/to/codeximg/mcp-server.mjs
 ```
 
-Claude Desktop / Cursor — add to the MCP config:
+That writes `mcpServers` into `~/.claude.json`.
+
+**Claude Desktop.** It is an MSIX package, so its config is *not* at
+`%APPDATA%\Claude\` — it is virtualised:
+
+```
+%LOCALAPPDATA%\Packages\Claude_<publisherid>\LocalCache\Roaming\Claude\claude_desktop_config.json
+```
+
+Add the server there and restart the app:
 
 ```json
 {
   "mcpServers": {
     "codeximg": {
       "command": "node",
-      "args": ["C:/Users/you/Desktop/git/codeximg/mcp-server.mjs"]
+      "args": ["C:/path/to/codeximg/mcp-server.mjs"]
     }
   }
 }
 ```
 
-Then ask the agent for an image. It calls `generate_image` and gets the PNG back.
+Use absolute paths, with forward slashes. Then ask the agent for an image: it calls
+`generate_image` and gets the PNG back.
+
+Before wiring anything up, it is worth running `node smoke-test.mjs` once — it proves
+the whole chain without touching your client config.
 
 ## MCP tools
 
