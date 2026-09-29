@@ -1,15 +1,22 @@
 # chatgpt-desktop-image-mcp
 
-Give any agent **ChatGPT's image generator** as an MCP tool, by driving the
-already-signed-in Codex desktop app over the Chrome DevTools Protocol.
+**Give Claude Code, Claude Desktop, or any MCP client the ability to generate images
+with ChatGPT — on the subscription you already pay for.**
 
-The MCP server itself registers under the shorter name `codeximg`.
+It works by driving the already-signed-in Codex desktop app over the Chrome DevTools
+Protocol. No API key, and no Codex quota.
+
+![codeximg generating an image](docs/demo.png)
 
 - **No API key.**
 - **No Codex quota.** The app has a `Chat` / `Work` mode switch. `Work` runs the
   Codex agent against your Codex allowance; `Chat` is plain ChatGPT. This project
   **refuses to run** unless the app reports `current mode: ChatGPT`.
 - Real PNGs land on disk, and the image comes back in the tool result.
+- **Iterate.** `thread: "reuse"` keeps generations in one conversation, so
+  *"make it purple instead"* works. The default is a fresh, isolated conversation.
+
+The MCP server itself registers under the shorter name `codeximg`.
 
 ## Why not the Images API?
 
@@ -96,6 +103,13 @@ node generate.mjs --reuse "make it purple instead"   # iterate
 node generate.mjs "a red bicycle"                    # fresh conversation (default)
 node generate.mjs --focus                            # just open the saved one
 ```
+
+![three generations: green, blue, purple](docs/iteration.png)
+
+Panels 2 and 3 are the *same* image with only the hue changed — identical dimensions,
+identical pixel counts, different colour. Blue was produced in a fresh conversation
+(the fallback path); purple with `thread: "reuse"`. That is what carrying context buys
+you, and it is why the two modes exist.
 
 ## How it works
 
@@ -185,6 +199,14 @@ re-derived after a ChatGPT UI update instead of guessed at. Always start with
 | libuv assertion (`async.c`) on shutdown | Calling `process.exit()` while stdio handles are still closing. Let the event loop drain instead. |
 | A saved conversation cannot be found again | The sidebar holds **two unrelated row families** — `[data-sidebar-chatgpt-conversation-key]` (a ChatGPT conversation) and `[data-app-action-sidebar-thread-row]` (an app-local thread) — and the composer id lives in a *different namespace* than either (`local-chatgpt:<uuid>` vs `chatgpt:conversation:<uuid>`). Only the **title** joins them, and rows render lazily, so you have to scroll the sidebar while looking. |
 | Posting into the wrong conversation | Never trust a title match on its own. `reuse` re-reads the composer's conversation id after navigating, and refuses if it does not match what was requested. |
+
+## How this was figured out
+
+None of it is documented anywhere. [`docs/reverse-engineering.md`](docs/reverse-engineering.md)
+records the findings: that the Codex app is an Electron shell around the full ChatGPT
+UI, that its `Chat`/`Work` switch is a quota *and* safety boundary, how to launch a
+packaged Electron app with arguments, why the accessibility tree is unreliable, and
+why the sidebar's conversation ids cannot be joined to the composer's.
 
 ## Security
 
