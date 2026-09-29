@@ -1,0 +1,15 @@
+{
+  "name": "codeximg",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drive ChatGPT's image generator from the Codex desktop app over CDP — no API key, no Codex quota.",
+  "type": "module",
+  "scripts": {
+    "gen": "node generate.mjs",
+    "recon:targets": "node recon/targets.mjs",
+    "recon:inspect": "node recon/inspect.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
