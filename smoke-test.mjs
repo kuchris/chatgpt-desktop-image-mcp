@@ -81,6 +81,18 @@ if (GLAMA) {
     if (res.error) fail(`${method} -> ${JSON.stringify(res.error)}`);
     const items = res.result?.[key] ?? [];
     console.log(`  ${method.padEnd(16)} ok  (${items.length} ${key})`);
+    if (method === 'tools/list') {
+      for (const t of items) {
+        const a = t.annotations || {};
+        console.log(
+          `      ${t.name.padEnd(15)} readOnly=${String(a.readOnlyHint).padEnd(5)}` +
+            ` destructive=${String(a.destructiveHint).padEnd(5)}` +
+            ` idempotent=${String(a.idempotentHint).padEnd(5)}` +
+            ` openWorld=${a.openWorldHint}`,
+        );
+        console.log(`      ${' '.repeat(15)} description: ${t.description.length} chars`);
+      }
+    }
   }
   console.log('\nGLAMA INTROSPECTION PASSED');
 } else {

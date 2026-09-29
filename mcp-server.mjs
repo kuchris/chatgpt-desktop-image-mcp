@@ -19,11 +19,26 @@ const TOOLS = [
   {
     name: 'generate_image',
     description:
-      'Generate an image with ChatGPT and save it as a PNG on disk. ' +
-      'Runs in the already-signed-in Codex desktop app over the DevTools protocol: ' +
-      'no API key, and it never touches Codex/agent quota (it refuses to run unless the app is in "Chat" mode). ' +
-      'Takes 15-60 seconds. Calls are serialized, because they share one browser window. ' +
-      'Returns the saved file path, and the image itself.',
+      'Generate an image with ChatGPT and save it as a PNG on disk. Returns the file path, ' +
+      'the dimensions, and the image itself.\n\n' +
+      'Use for any visual asset the user asks for: a picture, illustration, icon, logo, ' +
+      'mockup or photo. Do not call it speculatively, and do not use it for diagrams or ' +
+      'charts that text already conveys.\n\n' +
+      'Not idempotent: the same prompt twice yields two different images and two files. ' +
+      'Takes 15-60 seconds, and calls are serialized because they share one application ' +
+      'window. Writes a new PNG every time, and overwrites an existing file if "filename" ' +
+      'collides with one. With thread "new" it also adds a conversation to the user\'s ' +
+      'ChatGPT sidebar.\n\n' +
+      'It drives the already-signed-in Codex desktop app over the DevTools protocol, so it ' +
+      'needs no API key and consumes no Codex agent quota. It refuses to run if the app is ' +
+      'in Work mode, because that would spend Codex usage.',
+    annotations: {
+      title: 'Generate an image with ChatGPT',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
     inputSchema: {
       type: 'object',
       properties: {
@@ -60,8 +75,18 @@ const TOOLS = [
   {
     name: 'image_status',
     description:
-      'Check whether ChatGPT image generation is usable right now: whether the debug port is open, ' +
-      'whether the app is in Chat mode, and whether the composer is present. Read-only.',
+      'Report whether image generation is usable right now: whether the debug port is open, ' +
+      'whether the app is in Chat mode, whether the composer is present, and which ' +
+      'conversation is currently open.\n\n' +
+      'Call this to diagnose a generate_image failure, or before the first generation of a ' +
+      'session, rather than guessing at the cause. Read-only, and safe to call at any time.',
+    annotations: {
+      title: 'Check image-generation status',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
 ];
