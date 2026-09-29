@@ -154,9 +154,20 @@ fails with instructions instead of killing it.
 | `smoke-test.mjs` | Speaks MCP to the server; `--generate` also does a real run |
 | `recon/*.mjs` | Read-only reconnaissance tools used to reverse the UI |
 
-`recon/` is kept because it is how you re-derive the selectors after a ChatGPT UI
-update: `targets.mjs` fingerprints every CDP target, `inspect.mjs` dumps the composer
-and button surfaces, `findnew.mjs` locates the new-chat control.
+### recon/
+
+Read-only reverse-engineering tools. They exist so the selectors below can be
+re-derived after a ChatGPT UI update instead of guessed at. Always start with
+`targets.mjs`.
+
+| Tool | Purpose |
+|---|---|
+| `targets.mjs` | Fingerprints every CDP target — the main window is the one whose URL is exactly `app://-/index.html` |
+| `inspect.mjs` | Dumps the composer, mode switch, model picker, and the buttons around the composer |
+| `attrs.mjs [regex]` | Census of the page's `data-*` attributes and sample values |
+| `sidebar-map.mjs` | Sidebar sections, collapsed state, rendered rows, scroll geometry |
+| `find.mjs text\|id\|shape <v>` | Find elements by text or attribute, or print a matched element's ancestor chain |
+| `open-thread.mjs "<title>"` | Click a sidebar conversation by title |
 
 ## Gotchas discovered the hard way
 
