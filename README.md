@@ -74,8 +74,26 @@ the whole chain without touching your client config.
 
 | Tool | Arguments | Notes |
 |---|---|---|
-| `generate_image` | `prompt` (required), `filename`, `output_dir` | 15–60 s. Calls are serialized, because they share one browser window. Returns the path, the dimensions, and the image itself. |
-| `image_status` | — | Read-only. Reports whether the port is open, whether the app is in Chat mode, and whether the composer is present. |
+| `generate_image` | `prompt` (required), `filename`, `output_dir`, `thread` | 15–60 s. Calls are serialized, because they share one browser window. Returns the path, the dimensions, and the image itself. |
+| `image_status` | — | Read-only. Reports whether the port is open, whether the app is in Chat mode, whether the composer is present, and which conversation is open. |
+
+### `thread`: new vs reuse
+
+| | `new` (default) | `reuse` |
+|---|---|---|
+| Conversation | a fresh one on every call | the one this tool last used |
+| Sees earlier generations | no | yes — "make it purple" works |
+| Sidebar rows created | one per call | one, total |
+
+`reuse` is what lets an agent iterate on its own output. It is *verified*, not guessed:
+the id of the open conversation is read from the composer before and after navigating,
+and the call refuses to post if it did not land where it asked to.
+
+```bash
+node generate.mjs --reuse "make it purple instead"   # iterate
+node generate.mjs "a red bicycle"                    # fresh conversation (default)
+node generate.mjs --focus                            # just open the saved one
+```
 
 ## How it works
 
@@ -152,6 +170,8 @@ and button surfaces, `findnew.mjs` locates the new-chat control.
 | In-page `fetch(img.src)` fails | `src` is a `blob:` URL. Use the CDP Network domain instead. |
 | `Runtime.evaluate` on the wrong target | There are several. The main window is the one whose URL is exactly `app://-/index.html`, not `?initialRoute=/avatar-overlay`. |
 | libuv assertion (`async.c`) on shutdown | Calling `process.exit()` while stdio handles are still closing. Let the event loop drain instead. |
+| A saved conversation cannot be found again | The sidebar holds **two unrelated row families** — `[data-sidebar-chatgpt-conversation-key]` (a ChatGPT conversation) and `[data-app-action-sidebar-thread-row]` (an app-local thread) — and the composer id lives in a *different namespace* than either (`local-chatgpt:<uuid>` vs `chatgpt:conversation:<uuid>`). Only the **title** joins them, and rows render lazily, so you have to scroll the sidebar while looking. |
+| Posting into the wrong conversation | Never trust a title match on its own. `reuse` re-reads the composer's conversation id after navigating, and refuses if it does not match what was requested. |
 
 ## Security
 

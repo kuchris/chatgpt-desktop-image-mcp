@@ -43,6 +43,15 @@ const TOOLS = [
             'Directory to write into. Prefer an absolute path, or a path relative to this server\'s ' +
             'working directory. Defaults to <codeximg>/out.',
         },
+        thread: {
+          type: 'string',
+          enum: ['new', 'reuse'],
+          description:
+            '"new" (default) starts a fresh conversation: fully isolated, but each call adds a row ' +
+            'to the user\'s sidebar and the model cannot see earlier generations. ' +
+            '"reuse" posts into the conversation this tool last used, so you can iterate ' +
+            '("same image but blue"). Use "reuse" when refining, "new" for a fresh subject.',
+        },
       },
       required: ['prompt'],
       additionalProperties: false,
@@ -72,6 +81,7 @@ async function callTool(name, args = {}) {
       prompt: args.prompt,
       outDir,
       filename: args.filename,
+      thread: args.thread,
       log,
     });
 

@@ -17,6 +17,7 @@ export const DEFAULT_OUT_DIR = process.env.OUT_DIR || path.join(HERE, 'out');
 const AUTOLAUNCH = process.env.CODEXIMG_AUTOLAUNCH !== '0';
 const LAUNCHER = path.join(HERE, 'launch-app.ps1');
 const LOCK_FILE = path.join(HERE, '.generate.lock');
+const STATE_FILE = path.join(HERE, '.thread.json');
 const LOCK_STALE_MS = 10 * 60 * 1000;
 
 const silent = () => {};
@@ -142,9 +143,55 @@ export async function probeStatus({ port = DEFAULT_PORT } = {}) {
         composerReady: !!composer,
         model: (modelBtn?.innerText || '').trim() || null,
         inTemporaryChat: /temporary/i.test(document.body.innerText.slice(0, 4000)),
+        conversationId: (() => {
+          const el = document.querySelector(
+            '[data-above-composer-conversation-id], [data-map-composer-conversation]',
+          );
+          const raw =
+            el?.getAttribute('data-above-composer-conversation-id') ||
+            el?.getAttribute('data-map-composer-conversation') ||
+            '';
+          const m = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+          return m ? m[0] : raw || null;
+        })(),
       };
     });
-    return { cdp: true, port, browser: version.Browser, ...info, usable: /current mode: ChatGPT/i.test(info.mode || '') };
+    return {
+      cdp: true,
+      port,
+      browser: version.Browser,
+      ...info,
+      savedConversationId: (await readState()).conversationId ?? null,
+      usable: /current mode: ChatGPT/i.test(info.mode || ''),
+    };
+  } finally {
+    cdp.close();
+  }
+}
+
+/**
+ * Navigate back to the saved conversation without generating anything.
+ * Exists mainly so the sidebar-navigation path is testable without spending
+ * an image generation on it.
+ */
+export async function focusConversation({ port = DEFAULT_PORT, log = silent } = {}) {
+  const st = await readState();
+  if (!st.conversationId) return { ok: false, reason: 'no saved conversation yet' };
+
+  await ensureEndpoint({ port, log });
+  const cdp = await attachMain(port);
+  try {
+    const how = await navigateToConversation(cdp, {
+      id: st.conversationId,
+      title: st.conversationTitle,
+    });
+    return {
+      ok: how === 'already-open' || how === 'navigated',
+      how,
+      want: st.conversationId,
+      wantTitle: st.conversationTitle,
+      landed: await readConversationId(cdp),
+    };
   } finally {
     cdp.close();
   }
@@ -197,6 +244,117 @@ export async function withLock(fn, { log = silent } = {}) {
 
 // ------------------------------------------------------------------ generate
 
+// ------------------------------------------------------------------ conversations
+//
+// The app never changes its URL, so conversations cannot be addressed by route.
+// Fortunately it tags the DOM with ids:
+//   [data-above-composer-conversation-id]     "chatgpt:<uuid>"                (current)
+//                                             "local-chatgpt:<uuid>"          (created here)
+//   [data-sidebar-chatgpt-conversation-key]   "chatgpt:conversation:<uuid>"   (each row)
+//                                             "local-chatgpt:conversation:<uuid>"
+// The prefixes vary, so we reduce everything to the bare uuid and match on that.
+
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+const readConversationId = (cdp) =>
+  evaluate(cdp, () => {
+    const el = document.querySelector(
+      '[data-above-composer-conversation-id], [data-map-composer-conversation]',
+    );
+    if (!el) return null;
+    const raw =
+      el.getAttribute('data-above-composer-conversation-id') ||
+      el.getAttribute('data-map-composer-conversation') ||
+      '';
+    const m = raw.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    return m ? m[0] : raw || null;
+  });
+
+const readConversationTitle = (cdp) => evaluate(cdp, () => document.title);
+
+/**
+ * Click a sidebar row by its title, scrolling the sidebar to render lazy rows.
+ *
+ * Two unrelated row families live in the sidebar:
+ *   [data-sidebar-chatgpt-conversation-key]   a ChatGPT conversation
+ *   [data-app-action-sidebar-thread-row]      an app-local thread
+ * and they carry ids from *different namespaces* — the composer reports a local id
+ * ("local-chatgpt:<uuid>") while the sidebar reports a server id
+ * ("chatgpt:conversation:<uuid>"). The title is the only join between them.
+ *
+ * Returns the matched title, or null.
+ */
+export const clickSidebarRowByTitle = (cdp, title) =>
+  evaluate(
+    cdp,
+    (want) => {
+      const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+      const scope = document.querySelector('[data-app-action-sidebar-scroll]') || document;
+      const rows = scope.querySelectorAll(
+        '[data-sidebar-chatgpt-conversation-key], [data-app-action-sidebar-thread-row]',
+      );
+      for (const row of rows) {
+        const span = row.querySelector('[data-thread-title]');
+        const t = span ? clean(span.innerText) : clean(row.innerText).replace(/^Unread\s+/i, '');
+        if (t !== want) continue;
+        row.scrollIntoView({ block: 'center' });
+        const target =
+          row.querySelector('[data-thread-title-trigger]') || row.querySelector('button') || row;
+        target.click();
+        return t;
+      }
+      return null;
+    },
+    title,
+  );
+
+/**
+ * Get back to a saved conversation.
+ *
+ * We locate a row by title, click it, then confirm via the composer's conversation
+ * id that we actually landed where we asked — the title alone is not proof, so the
+ * click is never trusted on its own.
+ */
+async function navigateToConversation(cdp, { id, title }) {
+  if ((await readConversationId(cdp)) === id) return 'already-open';
+  if (!title) return 'not-found';
+
+  const geom = await evaluate(cdp, () => {
+    const s = document.querySelector('[data-app-action-sidebar-scroll]');
+    return s ? { max: s.scrollHeight - s.clientHeight, step: s.clientHeight } : { max: 0, step: 800 };
+  });
+
+  const stepSize = Math.max(300, geom.step - 100);
+  for (let top = 0; top <= geom.max + stepSize; top += stepSize) {
+    await evaluate(cdp, (t) => {
+      const s = document.querySelector('[data-app-action-sidebar-scroll]');
+      if (s) s.scrollTop = t;
+    }, top);
+    await sleep(400);
+
+    const clicked = await clickSidebarRowByTitle(cdp, title);
+    if (clicked) {
+      await sleep(2500);
+      return (await readConversationId(cdp)) === id ? 'navigated' : 'wrong-conversation';
+    }
+  }
+  return 'not-found';
+}
+
+async function readState() {
+  try {
+    return JSON.parse(await fs.readFile(STATE_FILE, 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+async function writeState(patch) {
+  const next = { ...(await readState()), ...patch };
+  await fs.writeFile(STATE_FILE, JSON.stringify(next, null, 2));
+  return next;
+}
+
 export function pngSize(buf) {
   if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) return null;
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
@@ -212,20 +370,24 @@ export async function generateImage({
   filename,
   port = DEFAULT_PORT,
   timeout = Number(process.env.TIMEOUT || 180_000),
+  thread = 'new',
   ensure = true,
   log = silent,
 } = {}) {
   if (!prompt || !prompt.trim()) throw new Error('prompt is required');
+  if (thread !== 'new' && thread !== 'reuse') {
+    throw new Error(`thread must be "new" or "reuse", got "${thread}"`);
+  }
 
   return enqueue(() =>
     withLock(async () => {
       if (ensure) await ensureEndpoint({ port, log });
-      return withLockBody({ prompt: prompt.trim(), outDir, filename, port, timeout, log });
+      return withLockBody({ prompt: prompt.trim(), outDir, filename, port, timeout, thread, log });
     }, { log }),
   );
 }
 
-async function withLockBody({ prompt, outDir, filename, port, timeout, log }) {
+async function withLockBody({ prompt, outDir, filename, port, timeout, thread, log }) {
   const cdp = await attachMain(port);
 
   try {
@@ -266,16 +428,51 @@ async function withLockBody({ prompt, outDir, filename, port, timeout, log }) {
 
     const beforeSrcs = await evaluate(cdp, () => [...document.querySelectorAll('img')].map((i) => i.src));
 
-    // --- a fresh *regular* chat (temporary chats cannot generate images)
-    await evaluate(cdp, () => {
-      const btns = [...document.querySelectorAll('[aria-label="New chat"]')];
-      const target = btns.find((b) => b.getBoundingClientRect().top < 120) || btns[0];
-      target?.click();
-    });
-    await sleep(2500);
+    // --- pick the conversation
+    //   thread 'new'   -> always a fresh conversation: isolated, but no context,
+    //                     and every call leaves a row in the sidebar
+    //   thread 'reuse' -> the conversation recorded in .thread.json, so successive
+    //                     prompts can iterate ("now make it blue")
+    let reused = false;
+    if (thread === 'reuse') {
+      const st = await readState();
+      if (!st.conversationId) {
+        log('thread=reuse but nothing saved yet — starting a conversation');
+      } else {
+        const how = await navigateToConversation(cdp, {
+          id: st.conversationId,
+          title: st.conversationTitle,
+        });
+        log('navigate:', how);
+        if (how === 'already-open' || how === 'navigated') {
+          reused = true;
+          log(`reusing conversation ${st.conversationId} ("${st.conversationTitle}")`);
+        } else if (how === 'wrong-conversation') {
+          throw new Error(
+            'clicked a sidebar row but landed in a different conversation — refusing to post',
+          );
+        } else {
+          log(`conversation ${st.conversationId} is not reachable in the sidebar — starting a new one`);
+        }
+      }
+    }
 
-    const isTemp = () => evaluate(cdp, () => /temporary/i.test(document.body.innerText.slice(0, 4000)));
-    if (await isTemp()) throw new Error('still in a temporary chat — image generation is unavailable there');
+    if (!reused) {
+      // A fresh *regular* chat. Temporary chats cannot generate images, which is
+      // exactly why we never press the "Temporary chat" button.
+      await evaluate(cdp, () => {
+        const btns = [...document.querySelectorAll('[aria-label="New chat"]')];
+        const target = btns.find((b) => b.getBoundingClientRect().top < 120) || btns[0];
+        target?.click();
+      });
+      await sleep(2500);
+
+      const isTemp = await evaluate(cdp, () =>
+        /temporary/i.test(document.body.innerText.slice(0, 4000)),
+      );
+      if (isTemp) throw new Error('stuck in a temporary chat — image generation is unavailable there');
+      log('started a new conversation');
+    }
 
     // --- type the prompt into the ProseMirror composer
     const focused = await evaluate(cdp, () => {
@@ -353,6 +550,20 @@ async function withLockBody({ prompt, outDir, filename, port, timeout, log }) {
       throw new Error(`${e.message}\nlast UI text: …${tailText}`);
     }
     log('image detected via', found.via);
+
+    // --- remember the conversation so thread:'reuse' can come back to it
+    const convId = await readConversationId(cdp);
+    if (convId) {
+      await writeState({
+        conversationId: convId,
+        conversationTitle: await readConversationTitle(cdp),
+        updatedAt: new Date().toISOString(),
+        lastPrompt: prompt.slice(0, 140),
+      });
+      log('conversation id:', convId);
+    } else {
+      log('could not read the conversation id — thread:"reuse" will start a new one next time');
+    }
 
     // --- materialise the bytes
     const pick = captured.filter((c) => c.buf.length > 50_000).sort((a, b) => b.buf.length - a.buf.length)[0];

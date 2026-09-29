@@ -11,6 +11,7 @@
   "scripts": {
     "gen": "node generate.mjs",
     "status": "node generate.mjs --status",
+    "focus": "node generate.mjs --focus",
     "mcp": "node mcp-server.mjs",
     "smoke": "node smoke-test.mjs",
     "launch": "powershell -File launch-app.ps1"
